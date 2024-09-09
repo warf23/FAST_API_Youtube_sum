@@ -1,0 +1,8 @@
+fastapi
+pydantic
+langchain
+langchain_groq
+validators
+uvicorn
+youtube_transcript_api
+unstructured
