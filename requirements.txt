@@ -1,8 +1,9 @@
 fastapi
 pydantic
 langchain
-langchain_groq
+langchain-groq
 validators
-uvicorn
-youtube_transcript_api
+youtube-transcript-api
 unstructured
+uvicorn
+python-multipart
