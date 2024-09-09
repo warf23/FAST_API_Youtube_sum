@@ -12,14 +12,14 @@ from fastapi.middleware.cors import CORSMiddleware
 # FastAPI app instance
 app = FastAPI()
 
-# Add CORS middleware
-app.add_middleware(
-  CORSMiddleware,
-  allow_origins=["https://my-own-youtube-url-summarizer-saas-application-frontend.vercel.app/"],  # Add your React app's URL
-  allow_credentials=True,
-  allow_methods=["*"],
-  allow_headers=["*"],
-)
+# # Add CORS middleware
+# app.add_middleware(
+#   CORSMiddleware,
+#   allow_origins=["https://my-own-youtube-url-summarizer-saas-application-frontend.vercel.app/"],  # Add your React app's URL
+#   allow_credentials=True,
+#   allow_methods=["*"],
+#   allow_headers=["*"],
+# )
 
 # Define API key security scheme
 API_KEY_NAME = "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"
