@@ -1,4 +1,6 @@
-from fastapi import FastAPI, HTTPException
+import os
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
@@ -6,12 +8,6 @@ from langchain.chains.summarize import load_summarize_chain
 from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
 import validators
 from fastapi.middleware.cors import CORSMiddleware
-import logging
-import os
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # FastAPI app instance
 app = FastAPI()
@@ -19,15 +15,23 @@ app = FastAPI()
 # Add CORS middleware
 app.add_middleware(
   CORSMiddleware,
-  allow_origins=["*"],  # Allow all origins for now, you can restrict this later
+  allow_origins=["https://my-own-youtube-url-summarizer-saas-application-frontend.vercel.app/"],  # Add your React app's URL
   allow_credentials=True,
   allow_methods=["*"],
   allow_headers=["*"],
 )
 
+# Define API key security scheme
+API_KEY_NAME = "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"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+async def get_api_key(api_key_header: str = Depends(api_key_header)):
+  if api_key_header == os.environ.get("API_KEY"):
+      return api_key_header
+  raise HTTPException(status_code=403, detail="Could not validate credentials")
+
 # Define a request body model
 class SummarizeRequest(BaseModel):
-  groq_api_key: str
   url: str
   language: str = "English"
 
@@ -38,11 +42,11 @@ Please provide a concise and informative summary of the physics content from the
 Focus on the following aspects:
 1. Key physics concepts and principles introduced
 2. Important formulas or equations, if any
-3. Main theoretical explanations or arguments (if there are equations or formulas added)
+3. Main theoretical explanations or arguments ( if there a equations or formulas added )
 4. Significant experimental results or observations, if mentioned
 5. Practical applications or real-world examples of the concepts
 6. Any historical context or important physicists mentioned
-7. Add all the equations with bold format 
+7. add all the equation with bold format 
 
 The summary should be approximately 250-300 words in {language}, written in clear and accessible language. Ensure that the summary highlights the most relevant information and provides a solid foundation for understanding the topic.
 
@@ -56,29 +60,26 @@ language_codes = {'English': 'en', 'Arabic': 'ar', 'Spanish': 'es', 'French': 'f
                 'Italian': 'it', 'Portuguese': 'pt', 'Chinese': 'zh', 'Japanese': 'ja', 'Korean': 'ko'}
 
 @app.post("/summarize")
-async def summarize(request: SummarizeRequest):
-  logger.info(f"Received summarization request for URL: {request.url}")
-  
-  groq_api_key = request.groq_api_key
+async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_key)):
+  groq_api_key = os.environ.get("GROQ_API_KEY")
+  if not groq_api_key:
+      raise HTTPException(status_code=500, detail="GROQ API key not configured")
+
   url = request.url
   language = request.language
 
   # Validate input
   if not validators.url(url):
-      logger.error(f"Invalid URL provided: {url}")
       raise HTTPException(status_code=400, detail="Invalid URL")
 
   if language not in language_codes:
-      logger.error(f"Invalid language provided: {language}")
       raise HTTPException(status_code=400, detail="Invalid language")
 
   try:
       # Initialize the language model
-      logger.info("Initializing ChatGroq model")
       llm = ChatGroq(groq_api_key=groq_api_key, model="llama3-groq-70b-8192-tool-use-preview")
 
       # Load the URL content
-      logger.info(f"Loading content from URL: {url}")
       if "youtube.com" in url:
           loader = YoutubeLoader.from_youtube_url(url, language=language_codes[language], add_video_info=True)
       else:
@@ -87,46 +88,12 @@ async def summarize(request: SummarizeRequest):
           )
 
       docs = loader.load()
-      logger.info(f"Content loaded successfully. Document count: {len(docs)}")
 
       # Summarize the content
-      logger.info("Starting summarization process")
       summarize_chain = load_summarize_chain(llm=llm, chain_type="stuff", prompt=prompt)
       output = summarize_chain.run(input_documents=docs, language=language)
-      logger.info("Summarization completed successfully")
 
       return {"summary": output}
 
   except Exception as e:
-      logger.error(f"An error occurred during summarization: {str(e)}", exc_info=True)
-      raise HTTPException(status_code=500, detail=f"An error occurred during summarization: {str(e)}")
-
-# Root route
-@app.get("/")
-async def root():
-  logger.info("Root endpoint accessed")
-  return {"message": "Welcome to the Physics Content Summarizer API"}
-
-# Health check route
-@app.get("/health")
-async def health_check():
-  logger.info("Health check endpoint accessed")
-  return {"status": "healthy"}
-
-# Error handling for unhandled exceptions
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(request, exc):
-  logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
-  return {"detail": "An unexpected error occurred. Please try again later."}
-
-# Print environment variables (for debugging purposes)
-@app.on_event("startup")
-async def startup_event():
-  logger.info("Starting up the application")
-  logger.info("Environment variables:")
-  for key, value in os.environ.items():
-      logger.info(f"{key}: {value}")
-
-if __name__ == "__main__":
-  import uvicorn
-  uvicorn.run(app, host="0.0.0.0", port=8000)
+      raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
