@@ -4,6 +4,7 @@ langchain
 langchain_groq
 langchain_community
 pydantic
-validators
 python-multipart
 python-dotenv
+validators==0.28.1 
+youtube-transcript-api
