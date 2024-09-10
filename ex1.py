@@ -1,20 +1,38 @@
+import os
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import APIKeyHeader
+from pydantic import BaseModel, HttpUrl
 from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain.chains.summarize import load_summarize_chain
 from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
 import validators
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import APIKeyHeader
-import os
-from langcorn import create_service
 
+app = FastAPI()
 
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Update this with your frontend URL in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-groq_api_key = os.environ.get("GROQ_API_KEY")
-llm = ChatGroq(groq_api_key=groq_api_key, model="llama3-groq-70b-8192-tool-use-preview")
+# API key security
+API_KEY = os.environ.get("API_KEY")
+api_key_header = APIKeyHeader(name="X-API-Key")
 
+def get_api_key(api_key: str = Depends(api_key_header)):
+    if api_key != API_KEY:
+        raise HTTPException(status_code=403, detail="Could not validate API key")
+    return api_key
 
-# Define the prompt template
+class SummarizeRequest(BaseModel):
+    url: HttpUrl
+    language: str = "English"
+
 prompt_template = """
 Please provide a concise and informative summary of the physics content from the following text. 
 
@@ -33,21 +51,46 @@ Text to summarize:
 {text}
 """
 prompt = PromptTemplate(template=prompt_template, input_variables=["text", "language"])
-# Language options
+
 language_codes = {'English': 'en', 'Arabic': 'ar', 'Spanish': 'es', 'French': 'fr', 'German': 'de', 
-              'Italian': 'it', 'Portuguese': 'pt', 'Chinese': 'zh', 'Japanese': 'ja', 'Korean': 'ko'}
+                'Italian': 'it', 'Portuguese': 'pt', 'Chinese': 'zh', 'Japanese': 'ja', 'Korean': 'ko'}
 
-#  Load the URL content
-if "youtube.com" in url:
-    loader = YoutubeLoader.from_youtube_url(url, language=language_codes[language], add_video_info=True)
-else:
-    loader = UnstructuredURLLoader(
-        urls=[url], ssl_verify=False, headers={"User-Agent": "Mozilla/5.0"}
-          )
+@app.post("/summarize")
+async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_key)):
+    if request.language not in language_codes:
+        raise HTTPException(status_code=400, detail="Invalid language")
 
-docs = loader.load()
+    try:
+        groq_api_key = os.environ.get("GROQ_API_KEY")
+        if not groq_api_key:
+            raise HTTPException(status_code=500, detail="GROQ API key not configured")
 
-# Summarize the content
-summarize_chain = load_summarize_chain(llm=llm, chain_type="stuff", prompt=prompt)
-output = summarize_chain.run(input_documents=docs, language=language)
+        llm = ChatGroq(groq_api_key=groq_api_key, model="llama3-groq-70b-8192-tool-use-preview")
 
+        if "youtube.com" in str(request.url):
+            loader = YoutubeLoader.from_youtube_url(
+                str(request.url),
+                language=language_codes[request.language],
+                add_video_info=True
+            )
+        else:
+            loader = UnstructuredURLLoader(
+                urls=[str(request.url)],
+                ssl_verify=False,
+                headers={"User-Agent": "Mozilla/5.0"}
+            )
+
+        docs = loader.load()
+
+        summarize_chain = load_summarize_chain(llm=llm, chain_type="stuff", prompt=prompt)
+        output = summarize_chain.run(input_documents=docs, language=request.language)
+
+        return {"summary": output}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
+
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}

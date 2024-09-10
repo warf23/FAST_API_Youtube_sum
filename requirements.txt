@@ -6,3 +6,4 @@ langchain_community
 pydantic
 validators
 python-multipart
+python-dotenv
