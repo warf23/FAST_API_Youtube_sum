@@ -8,7 +8,7 @@ import validators
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 import os
-
+from langcorn import create_service
 # FastAPI app instance
 app = FastAPI()
 
@@ -94,3 +94,10 @@ async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_ke
 
   except Exception as e:
       raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
+  
+
+# Create a Langcorn service
+service = create_service(app)
+
+# Include the Langcorn router
+app.include_router(service.router)

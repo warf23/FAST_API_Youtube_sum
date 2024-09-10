@@ -2,8 +2,10 @@ fastapi
 pydantic
 langchain
 langchain-groq
+langchain_community
 validators
 youtube-transcript-api
 unstructured
 uvicorn
 python-multipart
+langcorn
