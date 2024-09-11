@@ -6,12 +6,14 @@ from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
+from langchain.schema import Document
 import validators
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 import time
 import traceback
 from io import StringIO
+from youtube_transcript_api import YouTubeTranscriptApi
 
 # Custom logging handler
 class MemoryHandler(logging.Handler):
@@ -69,9 +71,17 @@ prompt = PromptTemplate(template=prompt_template, input_variables=["text", "lang
 language_codes = {'English': 'en', 'Arabic': 'ar', 'Spanish': 'es', 'French': 'fr', 'German': 'de', 
               'Italian': 'it', 'Portuguese': 'pt', 'Chinese': 'zh', 'Japanese': 'ja', 'Korean': 'ko'}
 
+def extract_video_id(url):
+  if "youtube.com" in url:
+      return url.split("v=")[-1].split("&")[0]
+  elif "youtu.be" in url:
+      return url.split("/")[-1]
+  else:
+      raise ValueError("Not a valid YouTube URL")
+
 @app.post("/summarize")
 async def summarize(request: SummarizeRequest):
-  memory_handler.clear()  # Clear previous logs
+  memory_handler.clear()
   start_time = time.time()
   groq_api_key = request.groq_api_key
   url = request.url
@@ -97,14 +107,19 @@ async def summarize(request: SummarizeRequest):
 
       logger.info(f"Loading content from URL: {url}")
       if "youtube.com" in url or "youtu.be" in url:
-          logger.info("Detected YouTube URL, using YoutubeLoader")
+          logger.info("Detected YouTube URL, using YouTube Transcript API")
           try:
-              loader = YoutubeLoader.from_youtube_url(url, language=language_codes[language], add_video_info=True)
-              docs = loader.load()
-              logger.info(f"Successfully loaded YouTube content. Number of documents: {len(docs)}")
+              video_id = extract_video_id(url)
+              logger.info(f"Extracted video ID: {video_id}")
+              transcript = YouTubeTranscriptApi.get_transcript(video_id)
+              logger.info("Successfully fetched transcript")
+              text = " ".join([entry['text'] for entry in transcript])
+              docs = [Document(page_content=text)]
+              logger.info(f"Created document with transcript. Text length: {len(text)}")
           except Exception as yt_error:
-              logger.error(f"Error loading YouTube content: {str(yt_error)}")
-              raise HTTPException(status_code=500, detail=f"Error loading YouTube content: {str(yt_error)}")
+              logger.error(f"Error fetching YouTube transcript: {str(yt_error)}")
+              logger.error(f"YouTube error traceback: {traceback.format_exc()}")
+              raise HTTPException(status_code=500, detail=f"Error fetching YouTube transcript: {str(yt_error)}")
       else:
           logger.info("Using UnstructuredURLLoader")
           try:
@@ -115,6 +130,7 @@ async def summarize(request: SummarizeRequest):
               logger.info(f"Successfully loaded URL content. Number of documents: {len(docs)}")
           except Exception as url_error:
               logger.error(f"Error loading URL content: {str(url_error)}")
+              logger.error(f"URL error traceback: {traceback.format_exc()}")
               raise HTTPException(status_code=500, detail=f"Error loading URL content: {str(url_error)}")
 
       if not docs:
@@ -157,13 +173,8 @@ async def summarize(request: SummarizeRequest):
 
   except Exception as e:
       logger.error(f"Unexpected error occurred: {str(e)}")
-      logger.error(traceback.format_exc())
+      logger.error(f"Full traceback: {traceback.format_exc()}")
       return {
           "error": f"An unexpected error occurred: {str(e)}",
           "logs": memory_handler.get_logs()  # Include logs even when there's an error
       }
-
-# # For local development only
-# if __name__ == "__main__":
-#   import uvicorn
-#   uvicorn.run(app, host="0.0.0.0", port=8000)
