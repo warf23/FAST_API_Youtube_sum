@@ -1,110 +1,95 @@
-import os
-import logging
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.security import APIKeyHeader
-from pydantic import BaseModel, HttpUrl
-from langchain.prompts import PromptTemplate
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
-from langchain.chains.summarize import load_summarize_chain
-from langchain_community.document_loaders import YoutubeLoader, WebBaseLoader
+from langchain.chains import create_extraction_chain
+from langchain.text_splitter import CharacterTextSplitter
+from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+import validators
 from fastapi.middleware.cors import CORSMiddleware
-from langchain_community.document_loaders import UnstructuredURLLoader
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
+# FastAPI app instance
 app = FastAPI()
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Update this with your frontend URL in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# API key security
-API_KEY = os.environ.get("API_KEY")
-api_key_header = APIKeyHeader(name="X-API-Key")
-
-def get_api_key(api_key: str = Depends(api_key_header)):
-    if api_key != API_KEY:
-        raise HTTPException(status_code=403, detail="Could not validate API key")
-    return api_key
-
+# Define a request body model
 class SummarizeRequest(BaseModel):
-    url: HttpUrl
+    groq_api_key: str
+    url: str
     language: str = "English"
 
+# Define the prompt template
 prompt_template = """
 Please provide a concise and informative summary in the language {language} of the content found at the following URL. The summary should be approximately 300 words and should highlight the main points, key arguments, and any significant conclusions or insights presented in the content. Ensure that the summary is clear and easy to understand for someone who has not accessed the original content.
 
 URL Content:
 {text}
-
-Summary:
 """
 prompt = PromptTemplate(template=prompt_template, input_variables=["text", "language"])
 
+# Language options
 language_codes = {'English': 'en', 'Arabic': 'ar', 'Spanish': 'es', 'French': 'fr', 'German': 'de', 
                 'Italian': 'it', 'Portuguese': 'pt', 'Chinese': 'zh', 'Japanese': 'ja', 'Korean': 'ko'}
 
-@app.post("/api/summarize")
-async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_key)):
-    if request.language not in language_codes:
+@app.post("/summarize")
+async def summarize(request: SummarizeRequest):
+    groq_api_key = request.groq_api_key
+    url = request.url
+    language = request.language
+
+    # Validate input
+    if not validators.url(url):
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
+    if language not in language_codes:
         raise HTTPException(status_code=400, detail="Invalid language")
 
     try:
-        groq_api_key = os.environ.get("GROQ_API_KEY")
-        if not groq_api_key:
-            raise HTTPException(status_code=500, detail="GROQ API key not configured")
+        # Initialize the language model
+        model = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-70b-versatile")
 
-        llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-70b-versatile")
-
-        # Load content from URL
-        url = str(request.url)
-        logger.info(f"Attempting to load content from URL: {url}")
-
- 
-        
-        if "youtube.com" in url or "youtu.be" in url:
-            loader = YoutubeLoader.from_youtube_url(
-                url,
-                language=language_codes[request.language],
-                add_video_info=True
-            )
+        # Load the URL content
+        if "youtube.com" in url:
+            loader = YoutubeLoader.from_youtube_url(url, language=language_codes[language], add_video_info=True)
         else:
             loader = UnstructuredURLLoader(
                 urls=[url], ssl_verify=False, headers={"User-Agent": "Mozilla/5.0"}
             )
 
         docs = loader.load()
-        logger.info(f"Successfully loaded {len(docs)} document(s) from the URL")
 
-        if not docs:
-            raise HTTPException(status_code=400, detail="Unable to extract content from the provided URL")
+        # Combine the documents
+        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+        texts = text_splitter.split_documents(docs)
+        combined_text = " ".join([doc.page_content for doc in texts])
 
-        # Check content length
-        combined_text = " ".join([doc.page_content for doc in docs])
-        logger.info(f"Combined text length: {len(combined_text)} characters")
+        # Create the chain
+        chain = (
+            {"text": RunnablePassthrough(), "language": lambda _: language}
+            | prompt
+            | model
+            | StrOutputParser()
+        )
 
-        if len(combined_text) < 100:  # Arbitrary threshold, adjust as needed
-            raise HTTPException(status_code=400, detail="Insufficient content extracted from the URL")
-
-        summarize_chain = load_summarize_chain(llm=llm, chain_type="stuff", prompt=prompt)
-        logger.info("Running the summarization chain")
-        output = summarize_chain.run(input_documents=docs, language=request.language)
-
-        logger.info(f"Summary generated successfully. Length: {len(output)} characters")
+        # Run the chain
+        output = chain.invoke(combined_text)
 
         return {"summary": output}
 
     except Exception as e:
-        logger.error(f"Error occurred: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
 
-# Health check endpoint
-@app.get("/api/health")
-async def health_check():
-    return {"status": "healthy"}
+# Run with Uvicorn
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
