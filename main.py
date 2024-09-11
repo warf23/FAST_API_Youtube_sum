@@ -106,37 +106,14 @@ async def summarize(request: SummarizeRequest):
       model = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-70b-versatile")
 
       logger.info(f"Loading content from URL: {url}")
-      if "youtube.com" in url or "youtu.be" in url:
-          logger.info("Detected YouTube URL, using YouTube Transcript API")
-          try:
-              video_id = extract_video_id(url)
-              logger.info(f"Extracted video ID: {video_id}")
-              transcript = YouTubeTranscriptApi.get_transcript(video_id)
-              logger.info("Successfully fetched transcript")
-              text = " ".join([entry['text'] for entry in transcript])
-              docs = [Document(page_content=text)]
-              logger.info(f"Created document with transcript. Text length: {len(text)}")
-          except Exception as yt_error:
-              logger.error(f"Error fetching YouTube transcript: {str(yt_error)}")
-              logger.error(f"YouTube error traceback: {traceback.format_exc()}")
-              raise HTTPException(status_code=500, detail=f"Error fetching YouTube transcript: {str(yt_error)}")
+      # Load the URL content
+      if "youtube.com" in url:
+            loader = YoutubeLoader.from_youtube_url(url, language=language_codes[language], add_video_info=True)
       else:
-          logger.info("Using UnstructuredURLLoader")
-          try:
-              loader = UnstructuredURLLoader(
-                  urls=[url], ssl_verify=False, headers={"User-Agent": "Mozilla/5.0"}
-              )
-              docs = loader.load()
-              logger.info(f"Successfully loaded URL content. Number of documents: {len(docs)}")
-          except Exception as url_error:
-              logger.error(f"Error loading URL content: {str(url_error)}")
-              logger.error(f"URL error traceback: {traceback.format_exc()}")
-              raise HTTPException(status_code=500, detail=f"Error loading URL content: {str(url_error)}")
-
-      if not docs:
-          logger.error("No content loaded from the URL")
-          raise HTTPException(status_code=500, detail="No content could be loaded from the provided URL")
-
+            loader = UnstructuredURLLoader(
+                urls=[url], ssl_verify=False, headers={"User-Agent": "Mozilla/5.0"}
+            )
+      docs = loader.load()
       logger.info("Processing loaded content")
       text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
       texts = text_splitter.split_documents(docs)
