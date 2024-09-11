@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
@@ -10,9 +10,9 @@ from langchain_core.runnables import RunnablePassthrough
 import validators
 from fastapi.middleware.cors import CORSMiddleware
 
+
 # FastAPI app instance
 app = FastAPI()
-
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
