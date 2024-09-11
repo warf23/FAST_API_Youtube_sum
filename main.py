@@ -1,4 +1,5 @@
 import os
+import logging
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, HttpUrl
@@ -6,10 +7,13 @@ from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
+from langchain_community.document_loaders import YoutubeLoader, WebBaseLoader
 from langchain.text_splitter import CharacterTextSplitter
-import validators
 from fastapi.middleware.cors import CORSMiddleware
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -58,27 +62,36 @@ async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_ke
         if not groq_api_key:
             raise HTTPException(status_code=500, detail="GROQ API key not configured")
 
-        model = ChatGroq(groq_api_key=groq_api_key, model_name="gemma2-9b-it")
+        model = ChatGroq(groq_api_key=groq_api_key, model_name="mixtral-8x7b-32768")
 
-        if "youtube.com" in str(request.url):
+        # Load content from URL
+        url = str(request.url)
+        logger.info(f"Attempting to load content from URL: {url}")
+
+        if "youtube.com" in url or "youtu.be" in url:
             loader = YoutubeLoader.from_youtube_url(
-                str(request.url),
+                url,
                 language=language_codes[request.language],
                 add_video_info=True
             )
         else:
-            loader = UnstructuredURLLoader(
-                urls=[str(request.url)],
-                ssl_verify=False,
-                headers={"User-Agent": "Mozilla/5.0"}
-            )
+            loader = WebBaseLoader(url)
 
         docs = loader.load()
+        logger.info(f"Successfully loaded {len(docs)} document(s) from the URL")
+
+        if not docs:
+            raise HTTPException(status_code=400, detail="Unable to extract content from the provided URL")
 
         # Combine the documents
         text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
         texts = text_splitter.split_documents(docs)
         combined_text = " ".join([doc.page_content for doc in texts])
+
+        logger.info(f"Combined text length: {len(combined_text)} characters")
+
+        if len(combined_text) < 100:  # Arbitrary threshold, adjust as needed
+            raise HTTPException(status_code=400, detail="Insufficient content extracted from the URL")
 
         # Create the chain
         chain = (
@@ -89,11 +102,15 @@ async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_ke
         )
 
         # Run the chain
+        logger.info("Running the summarization chain")
         output = chain.invoke(combined_text)
+
+        logger.info(f"Summary generated successfully. Length: {len(output)} characters")
 
         return {"summary": output}
 
     except Exception as e:
+        logger.error(f"Error occurred: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
 
 # Health check endpoint
