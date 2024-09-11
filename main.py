@@ -2,10 +2,12 @@ import os
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, HttpUrl
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
-from langchain.chains.summarize import load_summarize_chain
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
+from langchain.text_splitter import CharacterTextSplitter
 import validators
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -38,13 +40,15 @@ Please provide a concise and informative summary in the language {language} of t
 
 URL Content:
 {text}
+
+Summary:
 """
 prompt = PromptTemplate(template=prompt_template, input_variables=["text", "language"])
 
 language_codes = {'English': 'en', 'Arabic': 'ar', 'Spanish': 'es', 'French': 'fr', 'German': 'de', 
                 'Italian': 'it', 'Portuguese': 'pt', 'Chinese': 'zh', 'Japanese': 'ja', 'Korean': 'ko'}
 
-@app.post("/summarize")
+@app.post("/api/summarize")
 async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_key)):
     if request.language not in language_codes:
         raise HTTPException(status_code=400, detail="Invalid language")
@@ -54,7 +58,7 @@ async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_ke
         if not groq_api_key:
             raise HTTPException(status_code=500, detail="GROQ API key not configured")
 
-        llm = ChatGroq(groq_api_key=groq_api_key, model="llama3-groq-70b-8192-tool-use-preview")
+        model = ChatGroq(groq_api_key=groq_api_key, model_name="mixtral-8x7b-32768")
 
         if "youtube.com" in str(request.url):
             loader = YoutubeLoader.from_youtube_url(
@@ -71,8 +75,21 @@ async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_ke
 
         docs = loader.load()
 
-        summarize_chain = load_summarize_chain(llm=llm, chain_type="stuff", prompt=prompt)
-        output = summarize_chain.run(input_documents=docs, language=request.language)
+        # Combine the documents
+        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+        texts = text_splitter.split_documents(docs)
+        combined_text = " ".join([doc.page_content for doc in texts])
+
+        # Create the chain
+        chain = (
+            {"text": RunnablePassthrough(), "language": lambda _: request.language}
+            | prompt
+            | model
+            | StrOutputParser()
+        )
+
+        # Run the chain
+        output = chain.invoke(combined_text)
 
         return {"summary": output}
 
@@ -80,6 +97,6 @@ async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_ke
         raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
 
 # Health check endpoint
-@app.get("/health")
+@app.get("/api/health")
 async def health_check():
     return {"status": "healthy"}
