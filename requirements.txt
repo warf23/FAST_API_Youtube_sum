@@ -1,13 +1,8 @@
 fastapi
-uvicorn
+pydantic==1.10.13
 langchain
+langchain_core
 langchain_groq
-langchain_community
-pydantic
-python-multipart
-python-dotenv
-validators==0.28.1 
 youtube-transcript-api
-pytube
-unstructured
-beautifulsoup4
+validators==0.28.1
+langchain_community
