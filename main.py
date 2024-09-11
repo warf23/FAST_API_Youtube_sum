@@ -10,28 +10,51 @@ import validators
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 import time
+import traceback
+from io import StringIO
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Custom logging handler
+class MemoryHandler(logging.Handler):
+  def __init__(self):
+      super().__init__()
+      self.logs = StringIO()
+
+  def emit(self, record):
+      log_entry = self.format(record)
+      self.logs.write(f"{log_entry}\n")
+
+  def get_logs(self):
+      return self.logs.getvalue()
+
+  def clear(self):
+      self.logs.truncate(0)
+      self.logs.seek(0)
 
 # FastAPI app instance
 app = FastAPI()
 
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+memory_handler = MemoryHandler()
+memory_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(memory_handler)
+
 # Add CORS middleware
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+  CORSMiddleware,
+  allow_origins=["*"],
+  allow_credentials=True,
+  allow_methods=["*"],
+  allow_headers=["*"],
 )
 
 # Define a request body model
 class SummarizeRequest(BaseModel):
-    groq_api_key: str
-    url: str
-    language: str = "English"
+  groq_api_key: str
+  url: str
+  language: str = "English"
 
 # Define the prompt template
 prompt_template = """
@@ -44,67 +67,103 @@ prompt = PromptTemplate(template=prompt_template, input_variables=["text", "lang
 
 # Language options
 language_codes = {'English': 'en', 'Arabic': 'ar', 'Spanish': 'es', 'French': 'fr', 'German': 'de', 
-                'Italian': 'it', 'Portuguese': 'pt', 'Chinese': 'zh', 'Japanese': 'ja', 'Korean': 'ko'}
+              'Italian': 'it', 'Portuguese': 'pt', 'Chinese': 'zh', 'Japanese': 'ja', 'Korean': 'ko'}
 
 @app.post("/summarize")
 async def summarize(request: SummarizeRequest):
-    start_time = time.time()
-    groq_api_key = request.groq_api_key
-    url = request.url
-    language = request.language
+  memory_handler.clear()  # Clear previous logs
+  start_time = time.time()
+  groq_api_key = request.groq_api_key
+  url = request.url
+  language = request.language
 
-    logger.info(f"Received URL: {url}")
+  logger.info(f"Received request - URL: {url}, Language: {language}")
 
-    if not url:
-        raise HTTPException(status_code=400, detail="URL is missing")
+  if not url:
+      logger.error("URL is missing")
+      raise HTTPException(status_code=400, detail="URL is missing")
 
-    if not validators.url(url):
-        raise HTTPException(status_code=400, detail="Invalid URL")
+  if not validators.url(url):
+      logger.error(f"Invalid URL: {url}")
+      raise HTTPException(status_code=400, detail="Invalid URL")
 
-    if language not in language_codes:
-        raise HTTPException(status_code=400, detail="Invalid language")
+  if language not in language_codes:
+      logger.error(f"Invalid language: {language}")
+      raise HTTPException(status_code=400, detail="Invalid language")
 
-    try:
-        logger.info("Initializing language model")
-        model = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-70b-versatile")
+  try:
+      logger.info("Initializing language model")
+      model = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-70b-versatile")
 
-        logger.info(f"Loading content from URL: {url}")
-        if "youtube.com" in url:
-            loader = YoutubeLoader.from_youtube_url(url, language=language_codes[language], add_video_info=True)
-        else:
-            loader = UnstructuredURLLoader(
-                urls=[url], ssl_verify=False, headers={"User-Agent": "Mozilla/5.0"}
-            )
+      logger.info(f"Loading content from URL: {url}")
+      if "youtube.com" in url or "youtu.be" in url:
+          logger.info("Detected YouTube URL, using YoutubeLoader")
+          try:
+              loader = YoutubeLoader.from_youtube_url(url, language=language_codes[language], add_video_info=True)
+              docs = loader.load()
+              logger.info(f"Successfully loaded YouTube content. Number of documents: {len(docs)}")
+          except Exception as yt_error:
+              logger.error(f"Error loading YouTube content: {str(yt_error)}")
+              raise HTTPException(status_code=500, detail=f"Error loading YouTube content: {str(yt_error)}")
+      else:
+          logger.info("Using UnstructuredURLLoader")
+          try:
+              loader = UnstructuredURLLoader(
+                  urls=[url], ssl_verify=False, headers={"User-Agent": "Mozilla/5.0"}
+              )
+              docs = loader.load()
+              logger.info(f"Successfully loaded URL content. Number of documents: {len(docs)}")
+          except Exception as url_error:
+              logger.error(f"Error loading URL content: {str(url_error)}")
+              raise HTTPException(status_code=500, detail=f"Error loading URL content: {str(url_error)}")
 
-        docs = loader.load()
-        logger.info(f"Loaded {len(docs)} documents")
+      if not docs:
+          logger.error("No content loaded from the URL")
+          raise HTTPException(status_code=500, detail="No content could be loaded from the provided URL")
 
-        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-        texts = text_splitter.split_documents(docs)
-        combined_text = " ".join([doc.page_content for doc in texts])
-        logger.info(f"Combined text length: {len(combined_text)}")
+      logger.info("Processing loaded content")
+      text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+      texts = text_splitter.split_documents(docs)
+      combined_text = " ".join([doc.page_content for doc in texts])
+      logger.info(f"Combined text length: {len(combined_text)}")
 
-        logger.info("Creating and running the chain")
-        chain = (
-            {"text": RunnablePassthrough(), "language": lambda _: language}
-            | prompt
-            | model
-            | StrOutputParser()
-        )
+      if len(combined_text) < 10:  # Arbitrary small number to check if text is essentially empty
+          logger.error("Processed text is too short or empty")
+          raise HTTPException(status_code=500, detail="Processed text is too short or empty")
 
-        output = chain.invoke(combined_text)
-        logger.info(f"Chain output length: {len(output)}")
+      logger.info("Creating and running the chain")
+      chain = (
+          {"text": RunnablePassthrough(), "language": lambda _: language}
+          | prompt
+          | model
+          | StrOutputParser()
+      )
 
-        execution_time = time.time() - start_time
-        logger.info(f"Total execution time: {execution_time:.2f} seconds")
+      output = chain.invoke(combined_text)
+      logger.info(f"Chain output length: {len(output)}")
 
-        return {"summary": output, "execution_time": f"{execution_time:.2f} seconds"}
+      if len(output) < 10:  # Another arbitrary check for very short outputs
+          logger.error("Generated summary is too short")
+          raise HTTPException(status_code=500, detail="Generated summary is too short")
 
-    except Exception as e:
-        logger.error(f"Error occurred: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
+      execution_time = time.time() - start_time
+      logger.info(f"Total execution time: {execution_time:.2f} seconds")
+
+      return {
+          "summary": output, 
+          "execution_time": f"{execution_time:.2f} seconds",
+          "logs": memory_handler.get_logs()  # Include logs in the response
+      }
+
+  except Exception as e:
+      logger.error(f"Unexpected error occurred: {str(e)}")
+      logger.error(traceback.format_exc())
+      return {
+          "error": f"An unexpected error occurred: {str(e)}",
+          "logs": memory_handler.get_logs()  # Include logs even when there's an error
+      }
 
 # # For local development only
 # if __name__ == "__main__":
-#     import uvicorn
-#     uvicorn.run(app, host="0.0.0.0", port=8000)
+#   import uvicorn
+#   uvicorn.run(app, host="0.0.0.0", port=8000)
