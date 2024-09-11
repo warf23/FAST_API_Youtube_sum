@@ -1,60 +1,37 @@
-from fastapi import FastAPI, HTTPException
+import os
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
-from langchain_core.prompts import PromptTemplate
+from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.chains.summarize import load_summarize_chain
 from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
-from langchain.schema import Document
 import validators
 from fastapi.middleware.cors import CORSMiddleware
-import logging
-import time
-import traceback
-from io import StringIO
-from youtube_transcript_api import YouTubeTranscriptApi
-
-# Custom logging handler
-class MemoryHandler(logging.Handler):
-  def __init__(self):
-      super().__init__()
-      self.logs = StringIO()
-
-  def emit(self, record):
-      log_entry = self.format(record)
-      self.logs.write(f"{log_entry}\n")
-
-  def get_logs(self):
-      return self.logs.getvalue()
-
-  def clear(self):
-      self.logs.truncate(0)
-      self.logs.seek(0)
 
 # FastAPI app instance
 app = FastAPI()
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-memory_handler = MemoryHandler()
-memory_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(memory_handler)
-
 # Add CORS middleware
 app.add_middleware(
   CORSMiddleware,
-  allow_origins=["*"],
+  allow_origins=["*"],  # Add your React app's URL
   allow_credentials=True,
   allow_methods=["*"],
   allow_headers=["*"],
 )
 
+# Define API key security scheme
+API_KEY_NAME = "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"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+async def get_api_key(api_key_header: str = Depends(api_key_header)):
+  if api_key_header == os.environ.get("API_KEY"):
+      return api_key_header
+  raise HTTPException(status_code=403, detail="Could not validate credentials")
+
 # Define a request body model
 class SummarizeRequest(BaseModel):
-  groq_api_key: str
   url: str
   language: str = "English"
 
@@ -69,89 +46,43 @@ prompt = PromptTemplate(template=prompt_template, input_variables=["text", "lang
 
 # Language options
 language_codes = {'English': 'en', 'Arabic': 'ar', 'Spanish': 'es', 'French': 'fr', 'German': 'de', 
-              'Italian': 'it', 'Portuguese': 'pt', 'Chinese': 'zh', 'Japanese': 'ja', 'Korean': 'ko'}
-
-def extract_video_id(url):
-  if "youtube.com" in url:
-      return url.split("v=")[-1].split("&")[0]
-  elif "youtu.be" in url:
-      return url.split("/")[-1]
-  else:
-      raise ValueError("Not a valid YouTube URL")
+                'Italian': 'it', 'Portuguese': 'pt', 'Chinese': 'zh', 'Japanese': 'ja', 'Korean': 'ko'}
 
 @app.post("/summarize")
-async def summarize(request: SummarizeRequest):
-  memory_handler.clear()
-  start_time = time.time()
-  groq_api_key = request.groq_api_key
+async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_key)):
+  groq_api_key = os.environ.get("GROQ_API_KEY")
+  if not groq_api_key:
+      raise HTTPException(status_code=500, detail="GROQ API key not configured")
+
   url = request.url
   language = request.language
 
-  logger.info(f"Received request - URL: {url}, Language: {language}")
-
-  if not url:
-      logger.error("URL is missing")
-      raise HTTPException(status_code=400, detail="URL is missing")
-
+  # Validate input
   if not validators.url(url):
-      logger.error(f"Invalid URL: {url}")
       raise HTTPException(status_code=400, detail="Invalid URL")
 
   if language not in language_codes:
-      logger.error(f"Invalid language: {language}")
       raise HTTPException(status_code=400, detail="Invalid language")
 
   try:
-      logger.info("Initializing language model")
-      model = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-70b-versatile")
+      # Initialize the language model
+      llm = ChatGroq(groq_api_key=groq_api_key, model="llama3-groq-70b-8192-tool-use-preview")
 
-      logger.info(f"Loading content from URL: {url}")
       # Load the URL content
       if "youtube.com" in url:
-            loader = YoutubeLoader.from_youtube_url(url, language=language_codes[language], add_video_info=True)
+          loader = YoutubeLoader.from_youtube_url(url, language=language_codes[language], add_video_info=True)
       else:
-            loader = UnstructuredURLLoader(
-                urls=[url], ssl_verify=False, headers={"User-Agent": "Mozilla/5.0"}
-            )
+          loader = UnstructuredURLLoader(
+              urls=[url], ssl_verify=False, headers={"User-Agent": "Mozilla/5.0"}
+          )
+
       docs = loader.load()
-      logger.info("Processing loaded content")
-      text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-      texts = text_splitter.split_documents(docs)
-      combined_text = " ".join([doc.page_content for doc in texts])
-      logger.info(f"Combined text length: {len(combined_text)}")
 
-      if len(combined_text) < 10:  # Arbitrary small number to check if text is essentially empty
-          logger.error("Processed text is too short or empty")
-          raise HTTPException(status_code=500, detail="Processed text is too short or empty")
+      # Summarize the content
+      summarize_chain = load_summarize_chain(llm=llm, chain_type="stuff", prompt=prompt)
+      output = summarize_chain.run(input_documents=docs, language=language)
 
-      logger.info("Creating and running the chain")
-      chain = (
-          {"text": RunnablePassthrough(), "language": lambda _: language}
-          | prompt
-          | model
-          | StrOutputParser()
-      )
-
-      output = chain.invoke(combined_text)
-      logger.info(f"Chain output length: {len(output)}")
-
-      if len(output) < 10:  # Another arbitrary check for very short outputs
-          logger.error("Generated summary is too short")
-          raise HTTPException(status_code=500, detail="Generated summary is too short")
-
-      execution_time = time.time() - start_time
-      logger.info(f"Total execution time: {execution_time:.2f} seconds")
-
-      return {
-          "summary": output, 
-          "execution_time": f"{execution_time:.2f} seconds",
-          "logs": memory_handler.get_logs()  # Include logs in the response
-      }
+      return {"summary": output}
 
   except Exception as e:
-      logger.error(f"Unexpected error occurred: {str(e)}")
-      logger.error(f"Full traceback: {traceback.format_exc()}")
-      return {
-          "error": f"An unexpected error occurred: {str(e)}",
-          "logs": memory_handler.get_logs()  # Include logs even when there's an error
-      }
+      raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
