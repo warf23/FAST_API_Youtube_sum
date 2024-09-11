@@ -1,20 +1,20 @@
-   from fastapi import FastAPI, HTTPException
-   from pydantic import BaseModel
-   from langchain_core.prompts import PromptTemplate
-   from langchain_groq import ChatGroq
-   from langchain.chains import create_extraction_chain
-   from langchain.text_splitter import CharacterTextSplitter
-   from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
-   from langchain_core.output_parsers import StrOutputParser
-   from langchain_core.runnables import RunnablePassthrough
-   import validators
-   from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from langchain_core.prompts import PromptTemplate
+from langchain_groq import ChatGroq
+from langchain.chains import create_extraction_chain
+from langchain.text_splitter import CharacterTextSplitter
+from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+import validators
+from fastapi.middleware.cors import CORSMiddleware
 
    # FastAPI app instance
-   app = FastAPI()
+app = FastAPI()
 
    # Add CORS middleware
-   app.add_middleware(
+app.add_middleware(
        CORSMiddleware,
        allow_origins=["*"],
        allow_credentials=True,
@@ -23,26 +23,26 @@
    )
 
    # Define a request body model
-   class SummarizeRequest(BaseModel):
+class SummarizeRequest(BaseModel):
        groq_api_key: str
        url: str
        language: str = "English"
 
    # Define the prompt template
-   prompt_template = """
+prompt_template = """
    Please provide a concise and informative summary in the language {language} of the content found at the following URL. The summary should be approximately 300 words and should highlight the main points, key arguments, and any significant conclusions or insights presented in the content. Ensure that the summary is clear and easy to understand for someone who has not accessed the original content.
 
    URL Content:
    {text}
    """
-   prompt = PromptTemplate(template=prompt_template, input_variables=["text", "language"])
+prompt = PromptTemplate(template=prompt_template, input_variables=["text", "language"])
 
    # Language options
-   language_codes = {'English': 'en', 'Arabic': 'ar', 'Spanish': 'es', 'French': 'fr', 'German': 'de', 
+language_codes = {'English': 'en', 'Arabic': 'ar', 'Spanish': 'es', 'French': 'fr', 'German': 'de', 
                    'Italian': 'it', 'Portuguese': 'pt', 'Chinese': 'zh', 'Japanese': 'ja', 'Korean': 'ko'}
 
-   @app.post("/summarize")
-   async def summarize(request: SummarizeRequest):
+@app.post("/summarize")
+async def summarize(request: SummarizeRequest):
        groq_api_key = request.groq_api_key
        url = request.url
        language = request.language
