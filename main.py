@@ -9,7 +9,11 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 import validators
 from fastapi.middleware.cors import CORSMiddleware
+import logging
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # FastAPI app instance
 app = FastAPI()
@@ -43,53 +47,63 @@ language_codes = {'English': 'en', 'Arabic': 'ar', 'Spanish': 'es', 'French': 'f
 
 @app.post("/summarize")
 async def summarize(request: SummarizeRequest):
-    groq_api_key = request.groq_api_key
-    url = request.url
-    language = request.language
+  groq_api_key = request.groq_api_key
+  url = request.url
+  language = request.language
 
-    # Validate input
-    if not validators.url(url):
-        raise HTTPException(status_code=400, detail="Invalid URL")
+  # Log the received URL
+  logger.info(f"Received URL: {url}")
 
-    if language not in language_codes:
-        raise HTTPException(status_code=400, detail="Invalid language")
+  # Validate input
+  if not url:
+      raise HTTPException(status_code=400, detail="URL is missing")
 
-    try:
-        # Initialize the language model
-        model = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-70b-versatile")
+  if not validators.url(url):
+      raise HTTPException(status_code=400, detail="Invalid URL")
 
-        # Load the URL content
-        if "youtube.com" in url:
-            loader = YoutubeLoader.from_youtube_url(url, language=language_codes[language], add_video_info=True)
-        else:
-            loader = UnstructuredURLLoader(
-                urls=[url], ssl_verify=False, headers={"User-Agent": "Mozilla/5.0"}
-            )
+  if language not in language_codes:
+      raise HTTPException(status_code=400, detail="Invalid language")
 
-        docs = loader.load()
+  try:
+      # Initialize the language model
+      model = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-70b-versatile")
 
-        # Combine the documents
-        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-        texts = text_splitter.split_documents(docs)
-        combined_text = " ".join([doc.page_content for doc in texts])
+      # Load the URL content
+      logger.info(f"Loading content from URL: {url}")
+      if "youtube.com" in url:
+          loader = YoutubeLoader.from_youtube_url(url, language=language_codes[language], add_video_info=True)
+      else:
+          loader = UnstructuredURLLoader(
+              urls=[url], ssl_verify=False, headers={"User-Agent": "Mozilla/5.0"}
+          )
 
-        # Create the chain
-        chain = (
-            {"text": RunnablePassthrough(), "language": lambda _: language}
-            | prompt
-            | model
-            | StrOutputParser()
-        )
+      docs = loader.load()
+      logger.info(f"Loaded {len(docs)} documents")
 
-        # Run the chain
-        output = chain.invoke(combined_text)
+      # Combine the documents
+      text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+      texts = text_splitter.split_documents(docs)
+      combined_text = " ".join([doc.page_content for doc in texts])
+      logger.info(f"Combined text length: {len(combined_text)}")
 
-        return {"summary": output}
+      # Create the chain
+      chain = (
+          {"text": RunnablePassthrough(), "language": lambda _: language}
+          | prompt
+          | model
+          | StrOutputParser()
+      )
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
+      # Run the chain
+      logger.info("Running the chain")
+      output = chain.invoke(combined_text)
+      logger.info(f"Chain output length: {len(output)}")
 
-# Run with Uvicorn
+      return {"summary": output}
+
+  except Exception as e:
+      logger.error(f"Error occurred: {str(e)}")
+      raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
 # if __name__ == "__main__":
 #     import uvicorn
 #     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
