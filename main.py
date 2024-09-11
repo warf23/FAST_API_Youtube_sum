@@ -1,13 +1,17 @@
 import os
+import logging
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, HttpUrl
 from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain.chains.summarize import load_summarize_chain
-from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
-import validators
+from langchain_community.document_loaders import YoutubeLoader, WebBaseLoader
 from fastapi.middleware.cors import CORSMiddleware
+from langchain_community.document_loaders import UnstructuredURLLoader
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -38,13 +42,15 @@ Please provide a concise and informative summary in the language {language} of t
 
 URL Content:
 {text}
+
+Summary:
 """
 prompt = PromptTemplate(template=prompt_template, input_variables=["text", "language"])
 
 language_codes = {'English': 'en', 'Arabic': 'ar', 'Spanish': 'es', 'French': 'fr', 'German': 'de', 
                 'Italian': 'it', 'Portuguese': 'pt', 'Chinese': 'zh', 'Japanese': 'ja', 'Korean': 'ko'}
 
-@app.post("/summarize")
+@app.post("/api/summarize")
 async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_key)):
     if request.language not in language_codes:
         raise HTTPException(status_code=400, detail="Invalid language")
@@ -54,32 +60,51 @@ async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_ke
         if not groq_api_key:
             raise HTTPException(status_code=500, detail="GROQ API key not configured")
 
-        llm = ChatGroq(groq_api_key=groq_api_key, model="llama3-groq-70b-8192-tool-use-preview")
+        llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-70b-versatile")
 
-        if "youtube.com" in str(request.url):
+        # Load content from URL
+        url = str(request.url)
+        logger.info(f"Attempting to load content from URL: {url}")
+
+ 
+        
+        if "youtube.com" in url or "youtu.be" in url:
             loader = YoutubeLoader.from_youtube_url(
-                str(request.url),
+                url,
                 language=language_codes[request.language],
                 add_video_info=True
             )
         else:
             loader = UnstructuredURLLoader(
-                urls=[str(request.url)],
-                ssl_verify=False,
-                headers={"User-Agent": "Mozilla/5.0"}
+                urls=[url], ssl_verify=False, headers={"User-Agent": "Mozilla/5.0"}
             )
 
         docs = loader.load()
+        logger.info(f"Successfully loaded {len(docs)} document(s) from the URL")
+
+        if not docs:
+            raise HTTPException(status_code=400, detail="Unable to extract content from the provided URL")
+
+        # Check content length
+        combined_text = " ".join([doc.page_content for doc in docs])
+        logger.info(f"Combined text length: {len(combined_text)} characters")
+
+        if len(combined_text) < 100:  # Arbitrary threshold, adjust as needed
+            raise HTTPException(status_code=400, detail="Insufficient content extracted from the URL")
 
         summarize_chain = load_summarize_chain(llm=llm, chain_type="stuff", prompt=prompt)
+        logger.info("Running the summarization chain")
         output = summarize_chain.run(input_documents=docs, language=request.language)
+
+        logger.info(f"Summary generated successfully. Length: {len(output)} characters")
 
         return {"summary": output}
 
     except Exception as e:
+        logger.error(f"Error occurred: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
 
 # Health check endpoint
-@app.get("/health")
+@app.get("/api/health")
 async def health_check():
     return {"status": "healthy"}

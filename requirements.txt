@@ -10,3 +10,4 @@ validators==0.28.1
 youtube-transcript-api
 pytube
 unstructured
+beautifulsoup4
