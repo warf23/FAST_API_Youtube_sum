@@ -58,7 +58,7 @@ async def summarize(request: SummarizeRequest, api_key: str = Depends(get_api_ke
         if not groq_api_key:
             raise HTTPException(status_code=500, detail="GROQ API key not configured")
 
-        model = ChatGroq(groq_api_key=groq_api_key, model_name="mixtral-8x7b-32768")
+        model = ChatGroq(groq_api_key=groq_api_key, model_name="gemma2-9b-it")
 
         if "youtube.com" in str(request.url):
             loader = YoutubeLoader.from_youtube_url(
