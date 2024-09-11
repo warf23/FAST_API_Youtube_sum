@@ -34,20 +34,9 @@ class SummarizeRequest(BaseModel):
     language: str = "English"
 
 prompt_template = """
-Please provide a concise and informative summary of the physics content from the following text. 
+Please provide a concise and informative summary in the language {language} of the content found at the following URL. The summary should be approximately 300 words and should highlight the main points, key arguments, and any significant conclusions or insights presented in the content. Ensure that the summary is clear and easy to understand for someone who has not accessed the original content.
 
-Focus on the following aspects:
-1. Key physics concepts and principles introduced
-2. Important formulas or equations, if any
-3. Main theoretical explanations or arguments (if there are equations or formulas added)
-4. Significant experimental results or observations, if mentioned
-5. Practical applications or real-world examples of the concepts
-6. Any historical context or important physicists mentioned
-7. Add all the equations with bold format 
-
-The summary should be approximately 250-300 words in {language}, written in clear and accessible language. Ensure that the summary highlights the most relevant information and provides a solid foundation for understanding the topic.
-
-Text to summarize:
+URL Content:
 {text}
 """
 prompt = PromptTemplate(template=prompt_template, input_variables=["text", "language"])
