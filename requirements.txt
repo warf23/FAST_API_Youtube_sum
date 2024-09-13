@@ -8,3 +8,4 @@ validators==0.28.1
 langchain_community
 pytube
 unstructured
+requests
