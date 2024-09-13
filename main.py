@@ -92,7 +92,7 @@ async def summarize(request: SummarizeRequest):
 
   try:
       # Initialize the language model
-      model = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-70b-versatile")
+      model = ChatGroq(groq_api_key=groq_api_key, model_name="gemma-7b-it")
 
       # Load the URL content
       content = load_url_content(url, language)
