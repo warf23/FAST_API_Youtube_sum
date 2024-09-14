@@ -10,3 +10,4 @@ pytube
 unstructured
 requests
 openai
+python-dotenv
