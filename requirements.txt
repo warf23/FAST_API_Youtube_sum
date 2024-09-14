@@ -9,6 +9,5 @@ langchain_community
 pytube
 unstructured
 requests
-openai
 python-dotenv
-pip install openai==0.28
+openai==0.28
