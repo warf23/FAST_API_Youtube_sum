@@ -9,3 +9,4 @@ langchain_community
 pytube
 unstructured
 requests
+openai
