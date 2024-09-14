@@ -15,9 +15,9 @@ from langchain.docstore.document import Document
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+app = FastAPI() 
 
-# Add CORS middleware
+# Add CORS middlewa
 app.add_middleware(
   CORSMiddleware,
   allow_origins=["*"],  # Allows all origins
