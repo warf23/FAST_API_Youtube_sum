@@ -106,8 +106,7 @@ async def summarize(request: SummarizeRequest):
       combined_text = " ".join(texts)
 
       docs = [Document(page_content=t) for t in texts]
-      # Summarize the content
-      # Summarize the content
+
       chain = load_summarize_chain(llm, chain_type="stuff", prompt=prompt_template)
       summary = chain.run(input_documents=docs, language=language)
 
